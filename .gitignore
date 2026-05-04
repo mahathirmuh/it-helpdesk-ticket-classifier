@@ -6,6 +6,9 @@
 # Paper/documents folder
 paper/
 
+# Personal development journal
+journal.md
+
 # Python cache
 __pycache__/
 *.py[cod]
