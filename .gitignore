@@ -3,6 +3,9 @@
 .env.local
 .env*.local
 
+# Paper/documents folder
+paper/
+
 # Python cache
 __pycache__/
 *.py[cod]
