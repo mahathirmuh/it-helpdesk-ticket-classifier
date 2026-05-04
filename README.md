@@ -27,7 +27,6 @@ rpl-svm1/
 ├── requirements.txt
 │
 ├── src/                          # Kode utama (jalankan dari project root)
-│   ├── bert_classifier.py        # Wrapper BERT sklearn-compatible
 │   ├── compare_svm_genai.py      # Komparasi lengkap semua skema
 │   ├── train_svm.py              # Standalone trainer: SVM
 │   ├── train_rf.py               # Standalone trainer: Random Forest
@@ -35,6 +34,7 @@ rpl-svm1/
 │   └── train_bert.py             # Standalone trainer: BERT
 │
 ├── notebooks/                    # Jupyter notebooks (interaktif)
+│   ├── bert_classifier.py        # Wrapper BERT sklearn-compatible
 │   ├── compare_svm_genai.ipynb
 │   ├── train_svm.ipynb
 │   ├── train_rf.ipynb
@@ -54,16 +54,21 @@ rpl-svm1/
 ├── data/                         # Dataset input
 │   ├── cobacek.xlsx              # Dataset utama (16.338 tiket)
 │   ├── cobacek100data.xlsx       # Sample 100 baris
-│   └── cobacek50data.xlsx        # Sample 50 baris
+│   ├── cobacek50data.xlsx        # Sample 50 baris
+│   └── cobacek20data.xlsx        # Sample 20 baris
 │
 ├── results/                      # Output eksperimen (Excel)
 │   ├── cobacek_compare_final.xlsx        # Hasil final 5-fold CV
 │   ├── cobacek_compare.xlsx              # Hasil run terbaru
 │   ├── cobacek_compare_3models.xlsx
+│   ├── cobacek_compare_3models_test.xlsx
 │   ├── cobacek_compare_auto.xlsx
 │   ├── cobacek_compare_gpt-4.1-mini.xlsx
 │   ├── cobacek_compare_gpt-4o-mini.xlsx
 │   ├── cobacek_compare_gpt-5-mini.xlsx
+│   ├── cobacek_compare_20data.xlsx
+│   ├── cobacek_compare_20datates.xlsx
+│   ├── cobacek_compare_test20.xlsx
 │   └── cobacek_pred.xlsx                 # Output train_svm.py
 │
 ├── docs/                         # Dokumentasi rencana
