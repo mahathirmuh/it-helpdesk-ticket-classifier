@@ -1,3 +1,22 @@
+# Rekaya Perangkat Lunak
+## Nama Peserta Kelompok & NRP
+<table>
+  <tr>
+    <td>
+      <div>Nama Peserta:</div>
+      <ul>
+        <li>Ananta Dwi Prayoga Alwy - 6025252007</li>
+        <li>Dhayu Intan Nareswari - 6025252005</li>
+        <li>Mahathir Muhammad - 6025252008</li>
+      </ul>
+    </td>
+    <td align="right" width="40%">
+      <img src="https://media.giphy.com/media/L8K62iTDkzGX6/giphy.gif" alt="Tim" />
+    </td>
+  </tr>
+</table>
+
+
 # Klasifikasi Tiket IT Helpdesk — Multi-Skema Komparasi
 
 Proyek ini membandingkan beberapa skema klasifikasi teks untuk memprediksi **category** dan **priority** tiket IT helpdesk dari kolom `description`.
