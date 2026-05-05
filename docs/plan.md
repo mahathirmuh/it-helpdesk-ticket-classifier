@@ -14,44 +14,24 @@ Membandingkan performa berbagai pendekatan klasifikasi teks pada dataset tiket I
 | 2 | **Random Forest** | TF-IDF (unigram+bigram) + RandomForestClassifier(n_estimators=200) |
 | 3 | **Logistic Regression** | TF-IDF (unigram+bigram) + LogisticRegression(max_iter=1000) |
 | 4 | **BERT** | Fine-tuned `distilbert-base-multilingual-cased` (HuggingFace) |
-| 5 | **GenAI-only** | OpenAI API, zero-shot per model |
-| 6 | **Hybrid SVM** | SVM prediksi dasar; GenAI koreksi baris yang SVM salah |
-| 7 | **Hybrid RF** | RF prediksi dasar; GenAI koreksi baris yang RF salah |
-| 8 | **Hybrid LR** | LR prediksi dasar; GenAI koreksi baris yang LR salah |
-| 9 | **Hybrid BERT** | BERT prediksi dasar; GenAI koreksi baris yang BERT salah |
+| 5 | **Hybrid SVM** | SVM prediksi dasar; GenAI koreksi baris yang SVM salah (mismatch category atau priority) |
 
 ---
 
 ## Dataset
 
-- **File:** `cobacek.xlsx`
+- **File:** `data/cobacek.xlsx`
 - **Kolom input:** `description`
-- **Kolom target:** `category`, `priority`
-- **Split:** 80% train / 20% test (stratified, random_state=42)
-
----
-
-## Struktur File
-
-```
-rpl-svm1/
-├── cobacek.xlsx                  # Dataset utama
-│
-├── bert_classifier.py            # Modul BERT (sklearn-compatible wrapper)
-│
-├── train_svm.py / .ipynb         # Standalone trainer: TF-IDF + SVM
-├── train_rf.py  / .ipynb         # Standalone trainer: TF-IDF + Random Forest
-├── train_logres.py / .ipynb      # Standalone trainer: TF-IDF + Logistic Regression
-├── train_bert.py / .ipynb        # Standalone trainer: fine-tuned BERT
-│
-└── compare_svm_genai.py / .ipynb # Script komparasi lengkap (semua 9 skema)
-```
+- **Kolom target:** `category` (81 kelas), `priority` (3 kelas: low, medium, high)
+- **Total baris:** 16.338 tiket
+- **Split:** Stratified K-Fold Cross-Validation (SVM/RF/LR: 5 fold; BERT: 3 fold)
 
 ---
 
 ## Metrik Evaluasi
 
 Setiap skema dievaluasi dengan:
+
 - **Accuracy**
 - **Macro Precision**
 - **Macro Recall**
@@ -59,24 +39,16 @@ Setiap skema dievaluasi dengan:
 - **Weighted F1**
 - **Jumlah sampel** (support)
 
-Output tersimpan di satu file Excel dengan sheet: `Predictions_Compare`, `Metrics`, `Summary`.
+Output tersimpan di satu file Excel (`hasil_final.xlsx`) dengan sheet:
+`Predictions_Compare`, `Metrics`, `Summary`, `Category_Analysis`.
 
 ---
 
-## Visualisasi (Notebook)
+## Visualisasi
 
-Setiap model training phase dilengkapi dengan:
-
-- **Confusion Matrix Heatmap** (2-panel: Category + Priority) — warna berbeda per model (Blues=SVM, Greens=RF, Oranges=LR, Purples=BERT)
-- **Markdown Penjelasan** — cara kerja model, kelebihan/kekurangan, dan cara baca confusion matrix
-
-Di akhir notebook (Section 16) terdapat **Grouped Bar Chart** untuk membandingkan Accuracy dan F1 semua skema sekaligus, beserta tabel karakteristik per skema.
-
----
-
-## Catatan Excel Output
-
-Setiap header kolom pada file Excel output dilengkapi **comment/note** (tooltip merah) yang menjelaskan arti kolom tersebut — mencakup kolom prediksi, ground truth, metrik, dan kolom hybrid dinamis.
+- **Confusion Matrix** per model (Category + Priority side-by-side) — disimpan ke `paper/figures/confusion_matrix_{model}.png`
+- **Per-Category Accuracy Table** — akurasi tiap model per kategori, highlight model terbaik
+- **Bar Chart Perbandingan** — grouped bar chart Accuracy & F1 semua skema (`paper/figures/fig5_accuracy_compare.png`, `fig6_macro_f1_compare.png`)
 
 ---
 
@@ -84,13 +56,13 @@ Setiap header kolom pada file Excel output dilengkapi **comment/note** (tooltip 
 
 | Parameter | Default | Keterangan |
 |-----------|---------|------------|
-| `--input` | `cobacek.xlsx` | File dataset |
-| `--output` | `cobacek_compare.xlsx` | File hasil |
-| `--models` | `gpt-4.1-mini` | OpenAI model ID (pisah koma untuk multi-model) |
-| `--bert-model` | `distilbert-base-multilingual-cased` | HuggingFace model ID |
-| `--bert-epochs` | `3` | Jumlah epoch fine-tuning BERT |
-| `--skip-bert` | `False` | Lewati BERT (untuk run cepat tanpa GPU) |
-| `--skip-lr` | `False` | Lewati Logistic Regression |
+| `INPUT_FILE` | `../data/cobacek.xlsx` | File dataset |
+| `OUTPUT_FILE` | `../results/hasil_final.xlsx` | File hasil |
+| `N_SPLITS` | `5` | Jumlah fold K-Fold (SVM/RF/LR) |
+| `BERT_N_SPLITS` | `3` | Jumlah fold K-Fold khusus BERT |
+| `MULTI_MODELS` | dari `.env` | OpenAI model ID (pisah koma) |
+| `SKIP_BERT` | `False` | Lewati BERT (untuk run cepat tanpa GPU) |
+| `SKIP_LR` | `False` | Lewati Logistic Regression |
 
 ---
 
@@ -103,4 +75,5 @@ scikit-learn
 openai
 torch
 transformers
+matplotlib
 ```
