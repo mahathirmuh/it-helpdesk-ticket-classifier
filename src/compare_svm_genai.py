@@ -2,8 +2,17 @@ import argparse
 import json
 import os
 import re
+import sys
 import time
 from typing import Dict, List, Optional, Tuple
+
+# Pastikan stdout/stderr bisa nge-print karakter non-ASCII di Windows console.
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 import numpy as np
 import pandas as pd
@@ -201,6 +210,56 @@ Ticket description:
     return default_cat, default_pri
 
 
+def classify_with_genai_voter(
+    client: OpenAI,
+    model: str,
+    text: str,
+    allowed_categories: List[str],
+    allowed_priorities: List[str],
+    retries: int = 2,
+) -> Tuple[str, str]:
+    """Voter prompt: TANPA hint dari SVM. GenAI prediksi independen.
+    Untuk Hybrid Voting Ensemble (Strategi 2). Hapus 'Current ML prediction'
+    yang sebelumnya bikin GenAI anchored ke jawaban SVM.
+    """
+    default_cat = allowed_categories[0]
+    default_pri = allowed_priorities[0]
+
+    prompt = f"""
+You are an IT helpdesk ticket classifier.
+Read the ticket and assign the most appropriate category and priority.
+Return strict JSON only with keys: category, priority. No explanation.
+
+Allowed category values (pick exactly one):
+{json.dumps(allowed_categories, ensure_ascii=True)}
+
+Allowed priority values (pick exactly one):
+{json.dumps(allowed_priorities, ensure_ascii=True)}
+
+Ticket description:
+\"\"\"{text[:3000]}\"\"\"
+""".strip()
+
+    for attempt in range(retries):
+        try:
+            response = client.responses.create(model=model, input=prompt)
+            raw = (response.output_text or "").strip()
+            parsed = json.loads(raw)
+            cat = str(parsed.get("category", default_cat)).strip()
+            pri = str(parsed.get("priority", default_pri)).strip()
+            if cat not in allowed_categories:
+                cat = default_cat
+            if pri not in allowed_priorities:
+                pri = default_pri
+            return cat, pri
+        except Exception:
+            if attempt < retries - 1:
+                time.sleep(1.5 * (attempt + 1))
+            else:
+                return default_cat, default_pri
+    return default_cat, default_pri
+
+
 def classify_with_genai(
     client: OpenAI,
     model: str,
@@ -284,6 +343,7 @@ def run_pipeline(
     conf_percentile: float = 30.0,
     topk: int = 3,
     random_state: int = 42,
+    enable_voting: bool = False,
 ) -> None:
     load_dotenv()
     api_key = os.getenv("OPENAI_API_KEY")
@@ -399,7 +459,7 @@ def run_pipeline(
     # --- BERT ---
     bert_available = not skip_bert
     if bert_available:
-        print(f"\nTraining BERT ({bert_model_name}) — bisa memakan beberapa menit di CPU...")
+        print(f"\nTraining BERT ({bert_model_name}) - bisa memakan beberapa menit di CPU...")
         bert_cat_model = BertClassifier(model_name=bert_model_name, epochs=bert_epochs)
         bert_pri_model = BertClassifier(model_name=bert_model_name, epochs=bert_epochs)
 
@@ -460,7 +520,7 @@ def run_pipeline(
         pri_thr = float(np.percentile(pri_margin, conf_percentile))
         cat_trigger_mask = pd.Series(cat_margin <= cat_thr, index=test_df.index)
         pri_trigger_mask = pd.Series(pri_margin <= pri_thr, index=test_df.index)
-        trigger_label = f"confidence (bottom {conf_percentile:.0f}% margin; cat≤{cat_thr:.3f}, pri≤{pri_thr:.3f})"
+        trigger_label = f"confidence (bottom {conf_percentile:.0f}% margin; cat<={cat_thr:.3f}, pri<={pri_thr:.3f})"
     else:
         raise ValueError(f"correction_mode tidak dikenal: {correction_mode}")
 
@@ -564,6 +624,72 @@ def run_pipeline(
             **metrics_dict(test_df["category"].tolist(), test_df[hybrid_svm_cat_col].tolist(), "category")})
         metrics_rows.append({"approach": f"Hybrid SVM ({selected_model})",
             **metrics_dict(test_df["priority"].tolist(),  test_df[hybrid_svm_pri_col].tolist(),  "priority")})
+
+    # === Strategi 2: Hybrid SVM-GenAI Voting Ensemble ===
+    # GenAI prediksi independen (tanpa hint SVM) di SEMUA test rows,
+    # lalu majority vote dengan SVM. Tie-break: pakai Fusion kalau tersedia, else SVM.
+    if enable_voting:
+        from collections import Counter
+
+        for selected_model in selected_models:
+            model_key = re.sub(r"[^a-zA-Z0-9]+", "_", selected_model).strip("_").lower()
+            voter_cat_col = f"genai_voter_category_{model_key}"
+            voter_pri_col = f"genai_voter_priority_{model_key}"
+            vote_cat_col = f"hybrid_voting_category_{model_key}"
+            vote_pri_col = f"hybrid_voting_priority_{model_key}"
+
+            print(f"\n[Voting] {selected_model} — predicting independently on {len(test_df)} test rows...")
+            voter_cats: List[str] = []
+            voter_pris: List[str] = []
+            for processed, idx in enumerate(test_df.index, start=1):
+                vc, vp = classify_with_genai_voter(
+                    client=client, model=selected_model,
+                    text=test_df.at[idx, "description"],
+                    allowed_categories=allowed_categories,
+                    allowed_priorities=allowed_priorities,
+                )
+                voter_cats.append(vc)
+                voter_pris.append(vp)
+                if processed % 50 == 0:
+                    print(f"  voter processed {processed}/{len(test_df)}")
+            test_df[voter_cat_col] = voter_cats
+            test_df[voter_pri_col] = voter_pris
+
+            # Majority voting per baris.
+            # Voters: SVM + GenAI (+ Fusion kalau tersedia) → 3-way kalau Fusion ada, 2-way kalau tidak.
+            vote_cats: List[str] = []
+            vote_pris: List[str] = []
+            tie_break_used = 0
+            for idx in test_df.index:
+                cat_votes = [test_df.at[idx, "svm_category"], test_df.at[idx, voter_cat_col]]
+                pri_votes = [test_df.at[idx, "svm_priority"], test_df.at[idx, voter_pri_col]]
+                if fusion_available:
+                    cat_votes.append(test_df.at[idx, "fusion_category"])
+                    pri_votes.append(test_df.at[idx, "fusion_priority"])
+
+                cat_counter = Counter(cat_votes)
+                pri_counter = Counter(pri_votes)
+                top_cat, top_cat_count = cat_counter.most_common(1)[0]
+                top_pri, top_pri_count = pri_counter.most_common(1)[0]
+
+                # Tie-break: pakai Fusion kalau tersedia, else SVM (lebih kuat dari masing-masing voter).
+                if top_cat_count == 1:
+                    top_cat = test_df.at[idx, "fusion_category"] if fusion_available else test_df.at[idx, "svm_category"]
+                    tie_break_used += 1
+                if top_pri_count == 1:
+                    top_pri = test_df.at[idx, "fusion_priority"] if fusion_available else test_df.at[idx, "svm_priority"]
+
+                vote_cats.append(top_cat)
+                vote_pris.append(top_pri)
+            test_df[vote_cat_col] = vote_cats
+            test_df[vote_pri_col] = vote_pris
+            n_voters = 3 if fusion_available else 2
+            print(f"  [Voting {selected_model}] {n_voters}-way vote done. tie_break_used (cat)={tie_break_used}/{len(test_df)}")
+
+            metrics_rows.append({"approach": f"Hybrid Voting ({selected_model}, {n_voters}-way)",
+                **metrics_dict(test_df["category"].tolist(), test_df[vote_cat_col].tolist(), "category")})
+            metrics_rows.append({"approach": f"Hybrid Voting ({selected_model}, {n_voters}-way)",
+                **metrics_dict(test_df["priority"].tolist(),  test_df[vote_pri_col].tolist(),  "priority")})
 
     metrics_df = pd.DataFrame(metrics_rows)
 
@@ -680,6 +806,8 @@ if __name__ == "__main__":
         help="Jumlah fold untuk Stratified K-Fold CV (default: 1 = single 80/20 split)")
     parser.add_argument("--base-seed",      type=int, default=42,
         help="Base random_state; fold ke-i pakai seed = base_seed + i (default: 42)")
+    parser.add_argument("--enable-voting",  action="store_true",
+        help="Aktifkan Hybrid Voting Ensemble (GenAI prediksi semua test rows; mahal)")
     args = parser.parse_args()
 
     models_arg = None
@@ -699,6 +827,7 @@ if __name__ == "__main__":
         correction_mode=args.correction_mode,
         conf_percentile=args.conf_percentile,
         topk=args.topk,
+        enable_voting=args.enable_voting,
     )
 
     if args.n_folds > 1:
