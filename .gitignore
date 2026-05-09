@@ -9,6 +9,9 @@ paper/
 # Personal development journal
 journal.md
 
+# Claude Code working directory
+.claude/
+
 # Python cache
 __pycache__/
 *.py[cod]
