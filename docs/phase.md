@@ -1,121 +1,139 @@
 # Phase — Tahapan Pengerjaan
 
-## Phase 1 — Baseline ML (SVM & Random Forest)
+## Phase 1 — Baseline ML (SVM, RF, LR, BERT)
 
 **Status:** Selesai
 
 ### Deliverables
 
-- [x] `train_svm.py` — TF-IDF + LinearSVC, output `cobacek_pred.xlsx`
-- [x] `train_rf.py` — TF-IDF + RandomForestClassifier, output `cobacek_rf_pred.xlsx`
+- [x] `src/train_svm.py` — TF-IDF + LinearSVC (standalone)
+- [x] `src/train_rf.py` — TF-IDF + RandomForestClassifier (standalone)
+- [x] `src/train_logres.py` — TF-IDF + LogisticRegression (standalone)
+- [x] `src/bert_classifier.py` — sklearn-compatible wrapper untuk DistilBERT
+- [x] `src/train_bert.py` — standalone fine-tuning BERT
 
 ### Hasil
 
-- Evaluasi terpisah: category model & priority model
-- Metrik: accuracy + classification report per kelas
-- Output Excel: sheet `Predictions`, `Category Accuracy`, `Priority Accuracy`
+- 4 model klasik berhasil dilatih
+- BERT default: `distilbert-base-multilingual-cased` (lebih cepat dari BERT penuh)
+- Otomatis deteksi GPU/fallback CPU
 
 ---
 
-## Phase 2 — Logistic Regression
+## Phase 2 — Komparasi Multi-Skema dengan Hybrid GenAI Correction
 
-**Status:** Selesai
+**Status:** Selesai (kemudian dideprecate)
 
 ### Deliverables
 
-- [x] `train_logres.py` — TF-IDF + LogisticRegression, output `cobacek_lr_pred.xlsx`
+- [x] `src/compare_svm_genai.py` versi awal — Hybrid SVM dengan GenAI correction (decision-level)
+- [x] `notebooks/compare_svm_genai.ipynb` versi awal — notebook duplikasi logika
 
-### Detail Implementasi
+### Pendekatan Awal (Hybrid Correction)
 
-- `LogisticRegression(max_iter=1000, random_state=42)` dengan TF-IDF (unigram+bigram)
-- Struktur identik dengan SVM dan RF
+1. SVM prediksi semua tiket (OOF dari 5-fold CV)
+2. Identifikasi mismatch (SVM salah cat atau pri)
+3. Kirim baris mismatch ke OpenAI LLM (`gpt-4.1-mini`, dll) untuk dikoreksi
+4. Hasil akhir: SVM benar + koreksi LLM
+
+### Masalah yang Ditemukan
+
+- **Tidak ada train/test split** → semua angka SVM/RF/LR/BERT adalah training accuracy (overfitting)
+- **Hybrid Correction merusak akurasi**: prompt menyertakan "Current ML prediction" → LLM anchored, 0/901 cat override → no improvement, kadang malah merusak
+- **Bug per-kolom**: GenAI mengganti kedua kolom (cat & pri) padahal mungkin cuma 1 yang salah
+- **Hasil:** Hybrid ⩽ SVM tunggal di Acc Cat (0.7301 vs 0.8122 SVM training acc)
 
 ---
 
-## Phase 3 — BERT Fine-Tuning
+## Phase 3 — Hybrid Improvement Refactor (Branch `hybrid-improvement`)
 
 **Status:** Selesai
 
-### Deliverables
+### Tujuan
 
-- [x] `src/bert_classifier.py` — modul inti; sklearn-compatible wrapper untuk HuggingFace BERT
-- [x] `train_bert.py` — standalone trainer
+Membuat **Hybrid SVM-GenAI unggul SVM tunggal** secara statistik, dengan metodologi credible (proper train/test split, k-fold CV).
 
-### Detail Implementasi
+### Sub-phase
 
-- Model default: `distilbert-base-multilingual-cased` (multilingual, lebih cepat dari BERT penuh)
-- PyTorch DataLoader dengan custom `_TextDataset`
-- `LabelEncoder` untuk konversi label string → integer dan sebaliknya
-- Otomatis deteksi GPU (CUDA) / fallback ke CPU
-- Di CPU: ~6,3 jam untuk 16K baris dengan 3-fold, 2 epoch, batch 32
+1. **Train/Test Split foundation** — Stratified 80/20, evaluasi di test set saja
+2. **Per-column correction (fix bug)** — GenAI hanya update kolom yang SVM salah, bukan keduanya
+3. **Confidence gate + constrained validator** — `decision_function` margin + multiple-choice prompt
+4. **Guarded override audit** — track baris mana yang benar-benar di-override
+5. **K-fold orchestrator** — `run_pipeline_kfold()` agregasi mean ± std
 
----
+### Hasil Run #1 (single split, confidence-mode)
 
-## Phase 4 — Komparasi Multi-Skema dengan GenAI
-
-**Status:** Selesai
-
-### Deliverables
-
-- [x] `compare_svm_genai.ipynb` — notebook komparasi lengkap (17+ seksi)
-
-### Alur Kerja
-
-1. Load & validasi dataset (`cobacek.xlsx`, 16.338 baris)
-2. Stratified K-Fold (5 fold) → train & prediksi OOF untuk SVM, RF, LR
-3. Stratified K-Fold (3 fold) → train & prediksi OOF untuk BERT
-4. Tentukan baris mismatch SVM (salah di category **atau** priority) → 6.607 baris
-5. Loop per GenAI model: Hybrid SVM — SVM prediksi dasar, GenAI koreksi mismatch
-6. Kumpulkan semua metrik → sort descending by accuracy
-7. Export Excel `hasil_final.xlsx`: `Predictions_Compare`, `Metrics`, `Summary`, `Category_Analysis`
-
-### Model GenAI yang Digunakan
-
-- `gpt-5.4-mini`
-- `gpt-4.1-mini`
-- `gpt-4o-mini`
-
-### Hasil Utama (OOF, 16.338 baris)
-
-| Model | Acc Category | Acc Priority | Waktu |
+| Approach | Acc Cat | F1 Cat | Verdict |
 |---|---|---|---|
-| SVM | **0.8122** | 0.7250 | 70 s |
-| BERT | 0.7868 | 0.4940 | 22.607 s |
-| LR | 0.7734 | 0.6422 | 583 s |
-| RF | 0.7648 | 0.7175 | 317 s |
-| Hybrid (gpt-4o-mini) | 0.7301 | **0.7503** | 9.241 s |
-| Hybrid (gpt-5.4-mini) | 0.6919 | 0.7341 | 7.144 s |
-| Hybrid (gpt-4.1-mini) | 0.6697 | 0.7438 | 8.935 s |
+| SVM | 0.8136 | 0.3371 | Baseline |
+| Hybrid Fusion (TF-IDF + Embedding) | **0.8250** | **0.3477** | ✅ Menang +1.14% |
+| Hybrid Correction (gpt-4o-mini) | 0.8136 | 0.3371 | ❌ Tied (LLM tidak override) |
 
-### Excel Column Comments
-
-Setiap header kolom pada keempat sheet output dilengkapi **comment/note** (tooltip segitiga merah)
-yang menjelaskan arti kolom — termasuk kolom hybrid dinamis dan kolom `acc_*` per kategori.
+**Konfirmasi:** anchor bias di prompt → 0 override. Hybrid Correction dideprecate.
 
 ---
 
-## Phase 5 — Analisis Lanjutan & Visualisasi
+## Phase 4 — Pivot ke Hybrid Voting + Switch ke Filtered Dataset
 
-**Status:** Sebagian selesai
+**Status:** Selesai
+
+### Perubahan
+
+- Hapus seluruh kode Hybrid Correction (compute_topk_and_margin, classify_with_genai_constrained, classify_with_genai legacy)
+- Tambah `classify_with_genai_voter()` — prompt independen tanpa hint SVM
+- Tambah `--enable-voting` flag — Hybrid Voting Ensemble (3-way: SVM + Fusion + LLM)
+- Switch dataset dari `cobacek.xlsx` (81 kelas) → `cobacek_filtered.xlsx` (19 kelas, kolom `category_filtered`)
+- Update default CLI ke filtered dataset
 
 ### Deliverables
 
-- [x] Confusion Matrix per model (Category + Priority) — `paper/figures/confusion_matrix_{model}.png`
-- [x] Per-category accuracy analysis — sheet `Category_Analysis` di `hasil_final.xlsx`
-- [ ] Perbarui bar chart di `paper/figures/` dengan data terbaru (fig5–fig7)
-- [ ] Analisis lebih lanjut: mengapa Hybrid menurunkan akurasi kategori (+16K data)
-- [ ] Bandingkan efek prompt GenAI lama vs baru pada dataset yang sama
+- [x] `classify_with_genai_voter()` di `src/compare_svm_genai.py`
+- [x] `--enable-voting`, `--category-col` CLI flags
+- [x] Voting block di `run_pipeline()`
+
+---
+
+## Phase 5 — 5-Fold CV + Visualisasi + Cleanup
+
+**Status:** Selesai
+
+### Deliverables
+
+- [x] 5-fold Stratified CV via `--n-folds 5` — output `results/cobacek_filtered_kfold.xlsx`
+- [x] `src/visualize_results.py` — heatmap comparison (mirip paper)
+- [x] `results/heatmap_filtered.png` — single split visualization
+- [x] `results/heatmap_kfold.png` — 5-fold mean visualization
+- [x] Notebook `compare_svm_genai.ipynb` di-refactor 40 → 14 cell (import dari src/)
+- [x] Cleanup `results/` — pindah 14 file historis ke `results/archive/`
+
+### Hasil Final (5-Fold CV)
+
+| Approach | Acc Cat (mean ± std) | F1 Cat | Acc Pri | F1 Pri |
+|---|---|---|---|---|
+| **Hybrid Fusion** ✅ | **0.8214 ± 0.003** | **0.6738 ± 0.009** | **0.7219 ± 0.009** | **0.7097 ± 0.008** |
+| SVM | 0.8125 ± 0.004 | 0.6535 ± 0.015 | 0.7167 ± 0.011 | 0.7033 ± 0.009 |
+| Random Forest | 0.7660 ± 0.005 | 0.5353 ± 0.018 | 0.7172 ± 0.009 | 0.6838 ± 0.010 |
+| Logistic Regression | 0.7764 ± 0.005 | 0.4713 ± 0.007 | 0.6335 ± 0.008 | 0.5864 ± 0.008 |
+
+### Signifikansi Statistik
+
+- Acc Cat Hybrid Fusion vs SVM: **+0.89%** (>2σ, signifikan)
+- F1 Cat: **+2.03%** (>2σ, signifikan — penting untuk kelas minoritas)
+- Konsisten unggul di **semua 5 fold**
 
 ---
 
 ## Catatan Teknis
 
 | Topik | Keputusan |
-| --- | --- |
-| Metode evaluasi | Stratified K-Fold OOF (tidak ada data leakage) |
-| BERT default | `distilbert-base-multilingual-cased` — lebih cepat, cocok CPU |
-| Skip BERT/LR | Variabel `SKIP_BERT` / `SKIP_LR` di notebook |
-| Multi-model GenAI | Satu run bisa tes beberapa model sekaligus via `MULTI_MODELS` |
-| Hybrid target | Hanya Hybrid SVM yang diimplementasi (6.607 baris mismatch dikoreksi GenAI) |
-| Output file | `hasil_final.xlsx` — 4 sheet dengan header tooltip |
-| Confusion matrix | Disimpan ke `paper/figures/` DPI 150, tanpa anotasi jika >30 kelas |
+|---|---|
+| Metode evaluasi | Stratified Train/Test 80/20 + 5-fold CV (paper credibility) |
+| Dataset utama | `cobacek_filtered.xlsx` dengan `category_filtered` (19 kelas) |
+| Hybrid winning variant | **Fusion** (feature-level: TF-IDF + GenAI Embedding) |
+| Hybrid Correction | **Dihapus** — tidak unggul karena anchor bias prompt |
+| Hybrid Voting | Opt-in via `--enable-voting` (mahal: 1 GenAI call per test row) |
+| BERT default | `distilbert-base-multilingual-cased` — lebih cepat, cocok CPU; opsional |
+| Output single | `results/cobacek_filtered_compare.xlsx` (sheet Metrics, Summary, Predictions_Compare) |
+| Output kfold | `results/cobacek_filtered_kfold.xlsx` (sheet Metrics_Aggregated mean±std) |
+| Heatmap | `src/visualize_results.py` auto-detect single/kfold sheet |
+| Branch | `hybrid-improvement` (pushed to GitHub, belum merged ke master) |
