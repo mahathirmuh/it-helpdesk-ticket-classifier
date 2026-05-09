@@ -11,8 +11,28 @@ from matplotlib.colors import LinearSegmentedColormap
 
 
 def load_metrics(excel_path: str) -> pd.DataFrame:
-    df = pd.read_excel(excel_path, sheet_name="Metrics")
-    return df
+    """Load metrics dari output Excel.
+    Coba sheet 'Metrics' (single-fold). Fallback ke 'Metrics_Aggregated' (k-fold).
+    Untuk k-fold: pakai *_mean sebagai nilai utama.
+    """
+    xl = pd.ExcelFile(excel_path)
+    if "Metrics" in xl.sheet_names:
+        return pd.read_excel(excel_path, sheet_name="Metrics")
+    if "Metrics_Aggregated" in xl.sheet_names:
+        df = pd.read_excel(excel_path, sheet_name="Metrics_Aggregated")
+        # Map *_mean → metric utama (drop *_std untuk visualisasi)
+        rename_map = {
+            "accuracy_mean":        "accuracy",
+            "macro_precision_mean": "macro_precision",
+            "macro_recall_mean":    "macro_recall",
+            "macro_f1_mean":        "macro_f1",
+            "weighted_f1_mean":     "weighted_f1",
+        }
+        df = df.rename(columns=rename_map)
+        keep = ["approach", "label", "accuracy", "macro_precision",
+                "macro_recall", "macro_f1", "weighted_f1", "samples"]
+        return df[keep]
+    raise ValueError(f"Sheet 'Metrics' atau 'Metrics_Aggregated' tidak ditemukan di {excel_path}")
 
 
 def pivot_for_heatmap(metrics: pd.DataFrame) -> pd.DataFrame:
