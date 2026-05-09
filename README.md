@@ -88,10 +88,13 @@ rpl-svm1/
 ├── data/                         # Dataset input
 │   └── cobacek_filtered.xlsx     # Dataset utama (19 kategori, default)
 │
-├── results/                      # Output eksperimen
-│   ├── cobacek_filtered_compare.xlsx  # Hasil run filtered (terbaru)
-│   ├── cobacek_compare_phase1to5.xlsx # Hasil run original
-│   └── heatmap_filtered.png      # Visualisasi heatmap comparison
+├── results/                      # Output eksperimen (current)
+│   ├── cobacek_filtered_compare.xlsx       # Single split — Hybrid Fusion menang
+│   ├── cobacek_filtered_kfold.xlsx         # 5-fold CV mean ± std
+│   ├── cobacek_filtered_kfold_fold[0-4].xlsx
+│   ├── heatmap_filtered.png                # Heatmap single split
+│   ├── heatmap_kfold.png                   # Heatmap 5-fold mean
+│   └── archive/                            # Hasil eksperimen lama (14 file)
 │
 ├── docs/                         # Dokumentasi rencana
 │   ├── plan.md
