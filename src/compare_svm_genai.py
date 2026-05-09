@@ -193,6 +193,7 @@ def run_pipeline(
     embed_model: str = "text-embedding-3-small",
     random_state: int = 42,
     enable_voting: bool = False,
+    category_col: str = "category",
 ) -> None:
     load_dotenv()
     api_key = os.getenv("OPENAI_API_KEY")
@@ -200,6 +201,16 @@ def run_pipeline(
         raise ValueError("OPENAI_API_KEY tidak ditemukan di .env")
 
     df = pd.read_excel(input_file)
+
+    # Pilih kolom target category (default 'category', bisa override ke 'category_filtered' dll)
+    if category_col != "category":
+        if category_col not in df.columns:
+            raise ValueError(f"Kolom target '{category_col}' tidak ada di {input_file}. "
+                             f"Kolom tersedia: {list(df.columns)}")
+        df["category"] = df[category_col]
+        print(f"[Target] Pakai kolom '{category_col}' sebagai target kategori "
+              f"({df['category'].nunique()} kelas unik)")
+
     required = ["description", "category", "priority"]
     missing = [col for col in required if col not in df.columns]
     if missing:
@@ -545,6 +556,8 @@ if __name__ == "__main__":
         help="Base random_state; fold ke-i pakai seed = base_seed + i (default: 42)")
     parser.add_argument("--enable-voting",  action="store_true",
         help="Aktifkan Hybrid Voting Ensemble (GenAI prediksi semua test rows; mahal)")
+    parser.add_argument("--category-col",   default="category",
+        help="Nama kolom target kategori (default: 'category'; pakai 'category_filtered' untuk dataset filtered)")
     args = parser.parse_args()
 
     models_arg = None
@@ -561,6 +574,7 @@ if __name__ == "__main__":
         skip_fusion=args.skip_fusion,
         embed_model=args.embed_model,
         enable_voting=args.enable_voting,
+        category_col=args.category_col,
     )
 
     if args.n_folds > 1:

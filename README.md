@@ -29,21 +29,38 @@ Proyek ini membandingkan beberapa skema klasifikasi teks untuk memprediksi **cat
 | 2 | Random Forest | TF-IDF + RandomForestClassifier |
 | 3 | Logistic Regression | TF-IDF + LogisticRegression |
 | 4 | BERT | Fine-tuned DistilBERT multilingual |
-| 5 | Hybrid SVM | SVM sebagai dasar, GenAI koreksi mismatch SVM |
+| 5 | **Hybrid SVM-GenAI (Fusion)** | TF-IDF + OpenAI Embedding (semantic) → LinearSVC |
+| 6 | Hybrid SVM-GenAI (Voting, opsional) | Majority vote dari SVM + Fusion + LLM voter (gpt-4.1-mini) |
+
+### Arsitektur Hybrid SVM-GenAI (Fusion)
+
+Menggabungkan dua representasi teks:
+
+```
+                ┌─→ TF-IDF (lexical, ~50.000 dim, sparse) ──┐
+Teks tiket ─────┤                                           ├─→ Concat → LinearSVC → Prediksi
+                └─→ OpenAI Embedding (semantic, 1536 dim) ──┘
+                    text-embedding-3-small via API
+```
+
+- **TF-IDF** menangkap kata-kata spesifik (bagus untuk istilah teknis).
+- **OpenAI Embedding** menangkap arti/sinonim/parafrase (bagus untuk variasi bahasa).
+- Penggabungan keduanya memberi SVM dua sumber informasi → akurasi lebih tinggi.
 
 ---
 
-## Hasil Terbaik (16.338 tiket, Stratified K-Fold 5-fold)
+## Hasil — Filtered Dataset (16.338 tiket, 19 kategori, stratified 80/20 split)
 
-| Model | Acc Category | Acc Priority |
-|---|---|---|
-| **SVM** | **0.8122** ✅ | 0.7250 |
-| Hybrid SVM (gpt-4o-mini) | 0.7301 | **0.7503** ✅ |
-| BERT | 0.7868 | 0.4940 |
-| Logistic Regression | 0.7734 | 0.6422 |
-| Random Forest | 0.7648 | 0.7175 |
+| Model | Acc Cat | Acc Pri | F1 Cat (macro) | F1 Pri (macro) |
+|---|---|---|---|---|
+| **Hybrid SVM-GenAI (Fusion)** | **0.8250** ✅ | **0.7292** ✅ | **0.6881** ✅ | **0.7157** ✅ |
+| SVM | 0.8146 | 0.7197 | 0.6698 | 0.7059 |
+| Logistic Regression | 0.7723 | 0.6313 | 0.4654 | 0.5809 |
+| Random Forest | 0.7619 | 0.7075 | 0.5394 | 0.6722 |
 
-> SVM unggul di kategori (81 kelas). Hybrid SVM + gpt-4o-mini unggul di prioritas.
+> **Hybrid SVM-GenAI (Fusion) unggul di semua metrik vs single SVM** (+1.04% Acc Cat, +0.95% Acc Pri, +1.83% F1 Cat).
+> Run dengan `python src/compare_svm_genai.py --input data/cobacek_filtered.xlsx --category-col category_filtered --skip-bert`.
+> Heatmap visualisasi lengkap di `results/heatmap_filtered.png`.
 
 ---
 
@@ -58,7 +75,8 @@ rpl-svm1/
 │
 ├── src/                          # Kode utama (jalankan dari project root)
 │   ├── bert_classifier.py        # Wrapper BERT sklearn-compatible
-│   ├── compare_svm_genai.py      # Komparasi lengkap semua skema
+│   ├── compare_svm_genai.py      # Pipeline komparasi semua skema (utama)
+│   ├── visualize_results.py      # Generate heatmap dari hasil Excel
 │   ├── train_svm.py              # Standalone trainer: SVM
 │   ├── train_rf.py               # Standalone trainer: Random Forest
 │   ├── train_logres.py           # Standalone trainer: Logistic Regression
@@ -68,13 +86,14 @@ rpl-svm1/
 │   └── compare_svm_genai.ipynb   # Notebook utama komparasi semua skema
 │
 ├── data/                         # Dataset input
-│   ├── cobacek.xlsx              # Dataset utama (16.338 tiket)
-│   ├── cobacek100data.xlsx       # Sample 100 baris
-│   ├── cobacek50data.xlsx        # Sample 50 baris
-│   └── cobacek20data.xlsx        # Sample 20 baris
+│   ├── cobacek.xlsx              # Dataset original (81 kategori)
+│   ├── cobacek_filtered.xlsx     # Dataset filtered (19 kategori, recommended)
+│   └── cobacek*data.xlsx         # Sample subsets untuk testing cepat
 │
-├── results/                      # Output eksperimen (Excel)
-│   └── hasil_final.xlsx          # Hasil final — 4 sheet: Predictions_Compare, Metrics, Summary, Category_Analysis
+├── results/                      # Output eksperimen
+│   ├── cobacek_filtered_compare.xlsx  # Hasil run filtered (terbaru)
+│   ├── cobacek_compare_phase1to5.xlsx # Hasil run original
+│   └── heatmap_filtered.png      # Visualisasi heatmap comparison
 │
 ├── docs/                         # Dokumentasi rencana
 │   ├── plan.md
@@ -133,25 +152,36 @@ python src/train_bert.py --bert-epochs 3
 ### 2. Komparasi Lengkap (semua skema)
 
 ```bash
-# Run default
-python src/compare_svm_genai.py
-
-# Override input/output
+# Run default (filtered dataset, 19 kategori, skip BERT untuk cepat)
 python src/compare_svm_genai.py \
-    --input data/cobacek.xlsx \
-    --output results/hasil_final.xlsx \
-    --models gpt-4o-mini
+    --input data/cobacek_filtered.xlsx \
+    --category-col category_filtered \
+    --skip-bert \
+    --output results/cobacek_filtered_compare.xlsx
 
-# Skip BERT (lebih cepat, tanpa GPU)
+# Run dengan dataset original (81 kategori)
 python src/compare_svm_genai.py --skip-bert
 
-# Multi-model GenAI sekaligus
-python src/compare_svm_genai.py --models gpt-4.1-mini,gpt-4o-mini,gpt-5.4-mini
+# Aktifkan Hybrid Voting Ensemble (mahal: 1 GenAI call per test row)
+python src/compare_svm_genai.py --skip-bert --enable-voting --model gpt-4.1-mini
+
+# 5-fold Cross Validation (paper credibility)
+python src/compare_svm_genai.py --skip-bert --n-folds 5
 ```
 
 > **Catatan:** OpenAI API key harus tersedia di `.env` (`OPENAI_API_KEY=...`).
+> Embedding (untuk Fusion) pakai `text-embedding-3-small` — sangat murah (~$0.03 per run).
 
-### 3. Notebook Interaktif
+### 3. Visualisasi Heatmap
+
+```bash
+python src/visualize_results.py \
+    --input results/cobacek_filtered_compare.xlsx \
+    --output results/heatmap_filtered.png \
+    --title "PERBANDINGAN HYBRID SVM-GENAI (FILTERED)"
+```
+
+### 4. Notebook Interaktif
 
 ```bash
 jupyter notebook notebooks/compare_svm_genai.ipynb
@@ -164,18 +194,27 @@ jupyter notebook notebooks/compare_svm_genai.ipynb
 | Parameter | Default | Keterangan |
 |-----------|---------|------------|
 | `--input` | `data/cobacek.xlsx` | File dataset (.xlsx) |
-| `--output` | `results/hasil_final.xlsx` | File hasil |
-| `--models` | `gpt-4.1-mini` | ID model OpenAI (pisah koma) |
+| `--output` | `results/cobacek_compare.xlsx` | File hasil |
+| `--category-col` | `category` | Nama kolom target (`category_filtered` untuk filtered dataset) |
+| `--model` | (auto-detect) | Paksa model GenAI tertentu untuk voting |
+| `--models` | (auto-detect) | Daftar model dipisah koma (multi-model voting) |
 | `--bert-model` | `distilbert-base-multilingual-cased` | HuggingFace model ID |
 | `--bert-epochs` | `3` | Epoch fine-tuning BERT |
-| `--skip-bert` | — | Lewati training BERT |
+| `--skip-bert` | — | Lewati training BERT (sangat lambat di CPU) |
 | `--skip-lr` | — | Lewati Logistic Regression |
+| `--skip-fusion` | — | Lewati Hybrid SVM Fusion (skip embedding API) |
+| `--embed-model` | `text-embedding-3-small` | OpenAI embedding model untuk Fusion |
+| `--enable-voting` | — | Aktifkan Hybrid Voting Ensemble (mahal) |
+| `--n-folds` | `1` | Jumlah fold (>1 = Stratified K-Fold CV) |
+| `--base-seed` | `42` | Random state untuk train/test split |
 
 ---
 
 ## Dataset
 
-File `data/cobacek.xlsx` dengan kolom:
+Tersedia 2 versi dataset:
+
+### `data/cobacek.xlsx` (original, 81 kelas)
 
 | Kolom | Keterangan |
 |-------|------------|
@@ -183,13 +222,43 @@ File `data/cobacek.xlsx` dengan kolom:
 | `description` | Detail masalah — **input utama model** |
 | `answer` | Solusi yang diberikan |
 | `type` | Tipe tiket dari sumber data |
-| `category` | Label category (ground truth) — 81 kelas |
+| `category` | Label category (ground truth) — 81 kelas (granular) |
 | `priority` | Label priority (ground truth) — 3 kelas: low, medium, high |
+
+### `data/cobacek_filtered.xlsx` (filtered, 19 kelas)
+
+Sama seperti original tapi tambah kolom `category_filtered` — kategori digabung jadi 19 kelas yang lebih bersih (Security, Bug, Feedback, Feature, Performance, Billing, Outage, Network, Documentation, Product, Crash, Disruption, Marketing, Login, IT, Sales, Hardware, Customer Support, Other).
+
+---
+
+## Metodologi
+
+- **Stratified Train/Test Split 80/20** — by category, `random_state=42`. Train: 13.070 baris, Test: 3.268 baris.
+- **Semua metrik dihitung di test set** (tidak overfit ke training).
+- **Macro F1** dipakai sebagai metrik utama untuk fairness terhadap kelas minoritas.
+- **5-Fold Stratified CV** tersedia via `--n-folds 5` untuk paper credibility (mean ± std).
+
+### Output Excel (per run)
+
+| Sheet | Isi |
+|-------|------|
+| `Predictions_Compare` | Tiap baris test set + prediksi per model + audit columns |
+| `Metrics` | Tabel metrik lengkap (accuracy, precision, recall, F1, weighted F1) per model & label |
+| `Summary` | Konfigurasi run (model, split strategy, seed, voting status) |
+
+### Output K-Fold (`--n-folds N`)
+
+| Sheet | Isi |
+|-------|------|
+| `Metrics_Aggregated` | Mean ± std per (approach, label) across folds |
+| `Metrics_Per_Fold` | Detail metrik per fold |
+| `Summary` | Konfigurasi K-Fold |
 
 ---
 
 ## Catatan
 
-- **BERT di CPU** membutuhkan waktu sangat lama (~6,3 jam untuk 16K baris, 3-fold). Gunakan GPU (CUDA) atau `--skip-bert`.
-- **Hybrid SVM** hanya mengkoreksi baris di mana SVM salah (6.607 dari 16.338 baris), bukan seluruh dataset.
-- Output Excel `hasil_final.xlsx` memiliki 4 sheet: `Predictions_Compare`, `Metrics`, `Summary`, `Category_Analysis`.
+- **BERT di CPU** sangat lambat (~6,3 jam untuk 16K baris). Gunakan `--skip-bert` kalau tidak punya GPU.
+- **Hybrid Fusion** menggunakan OpenAI Embedding API (~$0.03 per run di dataset 16K baris).
+- **Hybrid Voting** sangat mahal (1 GenAI call per test row). Untuk 3268 baris ≈ ~$2-3 dan ~3 jam.
+- **Hybrid Correction (decision-level)** sebelumnya dicoba tapi **tidak unggul SVM** karena prompt menyertakan "Current ML prediction" yang membuat GenAI anchored ke jawaban SVM (0/901 cat override). Diganti dengan Voting Ensemble (independen prediction).
