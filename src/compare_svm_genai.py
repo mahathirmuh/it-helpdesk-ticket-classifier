@@ -181,8 +181,8 @@ def metrics_dict(y_true: List[str], y_pred: List[str], label_name: str) -> Dict[
 
 
 def run_pipeline(
-    input_file: str = "data/cobacek.xlsx",
-    output_file: str = "results/cobacek_compare.xlsx",
+    input_file: str = "data/cobacek_filtered.xlsx",
+    output_file: str = "results/cobacek_filtered_compare.xlsx",
     forced_model: Optional[str] = None,
     multi_models: Optional[List[str]] = None,
     bert_model_name: str = "distilbert-base-multilingual-cased",
@@ -193,7 +193,7 @@ def run_pipeline(
     embed_model: str = "text-embedding-3-small",
     random_state: int = 42,
     enable_voting: bool = False,
-    category_col: str = "category",
+    category_col: str = "category_filtered",
 ) -> None:
     load_dotenv()
     api_key = os.getenv("OPENAI_API_KEY")
@@ -475,8 +475,8 @@ def run_pipeline(
 
 
 def run_pipeline_kfold(
-    input_file: str = "data/cobacek.xlsx",
-    output_file: str = "results/cobacek_compare.xlsx",
+    input_file: str = "data/cobacek_filtered.xlsx",
+    output_file: str = "results/cobacek_filtered_kfold.xlsx",
     n_folds: int = 5,
     base_seed: int = 42,
     **kwargs,
@@ -537,8 +537,8 @@ def run_pipeline_kfold(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Bandingkan SVM vs RF vs LR vs BERT vs Hybrid SVM (Fusion / Voting)")
-    parser.add_argument("--input",          default="data/cobacek.xlsx",            help="Path file input Excel")
-    parser.add_argument("--output",         default="results/cobacek_compare.xlsx", help="Path file output Excel")
+    parser.add_argument("--input",          default="data/cobacek_filtered.xlsx",            help="Path file input Excel")
+    parser.add_argument("--output",         default="results/cobacek_filtered_compare.xlsx", help="Path file output Excel")
     parser.add_argument("--model",          default=None,                   help="Paksa model GenAI tertentu (untuk voting)")
     parser.add_argument("--models",         default=None,
         help="Daftar model dipisah koma (contoh: gpt-4.1-mini,gpt-4o-mini)")
@@ -556,8 +556,8 @@ if __name__ == "__main__":
         help="Base random_state; fold ke-i pakai seed = base_seed + i (default: 42)")
     parser.add_argument("--enable-voting",  action="store_true",
         help="Aktifkan Hybrid Voting Ensemble (GenAI prediksi semua test rows; mahal)")
-    parser.add_argument("--category-col",   default="category",
-        help="Nama kolom target kategori (default: 'category'; pakai 'category_filtered' untuk dataset filtered)")
+    parser.add_argument("--category-col",   default="category_filtered",
+        help="Nama kolom target kategori (default: 'category_filtered' untuk dataset filtered; pakai 'category' untuk 81 kelas asli)")
     args = parser.parse_args()
 
     models_arg = None
