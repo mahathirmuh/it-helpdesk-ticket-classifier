@@ -24,7 +24,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report
 from sklearn.model_selection import train_test_split
-from sklearn.pipeline import FeatureUnion, Pipeline
+from sklearn.pipeline import Pipeline
 from sklearn.svm import LinearSVC
 
 from bert_classifier import BertClassifier
@@ -103,20 +103,6 @@ class OpenAIEmbedder(BaseEstimator, TransformerMixin):
         return np.asarray(all_embeds, dtype=np.float32)
 
 
-def build_hybrid_svm_pipeline(
-    embed_model: str = "text-embedding-3-small",
-    api_key: Optional[str] = None,
-) -> Pipeline:
-    """Hybrid SVM: TF-IDF (lexical) + OpenAI GenAI embedding (semantic) -> LinearSVC."""
-    return Pipeline([
-        ("features", FeatureUnion([
-            ("tfidf", TfidfVectorizer(ngram_range=(1, 2))),
-            ("embed", OpenAIEmbedder(model_name=embed_model, api_key=api_key)),
-        ])),
-        ("svm", LinearSVC()),
-    ])
-
-
 def build_rf_pipeline() -> Pipeline:
     return Pipeline([
         ("tfidf", TfidfVectorizer(ngram_range=(1, 2))),
@@ -129,85 +115,6 @@ def build_lr_pipeline() -> Pipeline:
         ("tfidf", TfidfVectorizer(ngram_range=(1, 2))),
         ("lr", LogisticRegression(max_iter=1000, random_state=42)),
     ])
-
-
-def compute_topk_and_margin(
-    pipeline: Pipeline, texts: List[str], k: int = 3
-) -> Tuple[List[List[str]], np.ndarray]:
-    """Top-K kelas berdasarkan decision_function + margin (skor#1 - skor#2)."""
-    scores = np.asarray(pipeline.decision_function(texts))
-    svm_step = pipeline.named_steps["svm"]
-    classes = svm_step.classes_
-
-    if scores.ndim == 1:
-        # Binary: ekspansi ke 2D supaya konsisten dengan multiclass.
-        scores = np.column_stack([-scores, scores])
-
-    n_classes = scores.shape[1]
-    k_eff = max(1, min(k, n_classes))
-    sorted_idx = np.argsort(-scores, axis=1)
-    topk_idx = sorted_idx[:, :k_eff]
-    topk_labels = [[str(classes[j]) for j in row] for row in topk_idx]
-
-    sorted_scores = np.take_along_axis(scores, sorted_idx, axis=1)
-    if n_classes >= 2:
-        margin = sorted_scores[:, 0] - sorted_scores[:, 1]
-    else:
-        margin = sorted_scores[:, 0]
-    return topk_labels, margin
-
-
-def classify_with_genai_constrained(
-    client: OpenAI,
-    model: str,
-    text: str,
-    top_categories: List[str],
-    top_priorities: List[str],
-    ml_category: str,
-    ml_priority: str,
-    retries: int = 2,
-) -> Tuple[str, str]:
-    """Multiple-choice validator: GenAI memilih dari top-K kandidat SVM saja.
-    Kalau jawaban di luar shortlist atau gagal parse → fallback ke prediksi SVM.
-    """
-    default_cat = ml_category
-    default_pri = ml_priority
-
-    prompt = f"""
-You are validating an IT helpdesk ticket classification.
-Pick the single most appropriate category AND priority from the provided shortlists.
-Return strict JSON only with keys: category, priority.
-
-Category shortlist (pick exactly one from this list):
-{json.dumps(top_categories, ensure_ascii=True)}
-
-Priority shortlist (pick exactly one from this list):
-{json.dumps(top_priorities, ensure_ascii=True)}
-
-Current ML prediction: category='{ml_category}', priority='{ml_priority}'.
-Ticket description:
-\"\"\"{text[:3000]}\"\"\"
-""".strip()
-
-    for attempt in range(retries):
-        try:
-            response = client.responses.create(model=model, input=prompt)
-            raw = (response.output_text or "").strip()
-            parsed = json.loads(raw)
-            cat = str(parsed.get("category", default_cat)).strip()
-            pri = str(parsed.get("priority", default_pri)).strip()
-            # Guard: jawaban harus dalam shortlist; kalau tidak → fallback SVM.
-            if cat not in top_categories:
-                cat = default_cat
-            if pri not in top_priorities:
-                pri = default_pri
-            return cat, pri
-        except Exception:
-            if attempt < retries - 1:
-                time.sleep(1.5 * (attempt + 1))
-            else:
-                return default_cat, default_pri
-    return default_cat, default_pri
 
 
 def classify_with_genai_voter(
@@ -260,60 +167,6 @@ Ticket description:
     return default_cat, default_pri
 
 
-def classify_with_genai(
-    client: OpenAI,
-    model: str,
-    text: str,
-    allowed_categories: List[str],
-    allowed_priorities: List[str],
-    ml_category: Optional[str] = None,
-    ml_priority: Optional[str] = None,
-    retries: int = 2,
-) -> Tuple[str, str]:
-    default_category = ml_category or allowed_categories[0]
-    default_priority = ml_priority or allowed_priorities[0]
-
-    context_line = (
-        f"Current ML prediction: category='{ml_category}', priority='{ml_priority}'. "
-        "Improve only if clearly needed."
-    )
-
-    prompt = f"""
-You validate and refine ML predictions.
-Return strict JSON only with keys: category, priority.
-
-Allowed category values:
-{json.dumps(allowed_categories, ensure_ascii=True)}
-
-Allowed priority values:
-{json.dumps(allowed_priorities, ensure_ascii=True)}
-
-{context_line}
-Text:
-\"\"\"{text[:3000]}\"\"\"
-""".strip()
-
-    for attempt in range(retries):
-        try:
-            response = client.responses.create(model=model, input=prompt)
-            raw = (response.output_text or "").strip()
-            parsed = json.loads(raw)
-            category = str(parsed.get("category", default_category)).strip()
-            priority = str(parsed.get("priority", default_priority)).strip()
-            if category not in allowed_categories:
-                category = default_category
-            if priority not in allowed_priorities:
-                priority = default_priority
-            return category, priority
-        except Exception:
-            if attempt < retries - 1:
-                time.sleep(1.5 * (attempt + 1))
-            else:
-                return default_category, default_priority
-
-    return default_category, default_priority
-
-
 def metrics_dict(y_true: List[str], y_pred: List[str], label_name: str) -> Dict[str, float]:
     report = classification_report(y_true, y_pred, zero_division=0, output_dict=True)
     return {
@@ -330,7 +183,6 @@ def metrics_dict(y_true: List[str], y_pred: List[str], label_name: str) -> Dict[
 def run_pipeline(
     input_file: str = "data/cobacek.xlsx",
     output_file: str = "results/cobacek_compare.xlsx",
-    max_genai_rows: int = 100,
     forced_model: Optional[str] = None,
     multi_models: Optional[List[str]] = None,
     bert_model_name: str = "distilbert-base-multilingual-cased",
@@ -339,9 +191,6 @@ def run_pipeline(
     skip_lr: bool = False,
     skip_fusion: bool = False,
     embed_model: str = "text-embedding-3-small",
-    correction_mode: str = "confidence",
-    conf_percentile: float = 30.0,
-    topk: int = 3,
     random_state: int = 42,
     enable_voting: bool = False,
 ) -> None:
@@ -501,39 +350,6 @@ def run_pipeline(
                 f"Model tersedia: {', '.join(available_models)}"
             )
 
-    # Hitung top-K kandidat & margin SVM untuk test set (untuk Phase 3 confidence gate).
-    test_texts = test_df["description"].tolist()
-    cat_topk, cat_margin = compute_topk_and_margin(svm_cat_model, test_texts, k=topk)
-    pri_topk, pri_margin = compute_topk_and_margin(svm_pri_model, test_texts, k=topk)
-    test_df["svm_cat_margin"] = cat_margin
-    test_df["svm_pri_margin"] = pri_margin
-
-    # Trigger criteria untuk koreksi GenAI (per-kolom):
-    #   - "oracle"     : ground truth (data leakage; ablation/sanity check)
-    #   - "confidence" : bottom-X% margin SVM (deployable, default)
-    if correction_mode == "oracle":
-        cat_trigger_mask = test_df["svm_category"] != test_df["category"]
-        pri_trigger_mask = test_df["svm_priority"] != test_df["priority"]
-        trigger_label = "oracle (ground truth mismatch)"
-    elif correction_mode == "confidence":
-        cat_thr = float(np.percentile(cat_margin, conf_percentile))
-        pri_thr = float(np.percentile(pri_margin, conf_percentile))
-        cat_trigger_mask = pd.Series(cat_margin <= cat_thr, index=test_df.index)
-        pri_trigger_mask = pd.Series(pri_margin <= pri_thr, index=test_df.index)
-        trigger_label = f"confidence (bottom {conf_percentile:.0f}% margin; cat<={cat_thr:.3f}, pri<={pri_thr:.3f})"
-    else:
-        raise ValueError(f"correction_mode tidak dikenal: {correction_mode}")
-
-    any_trigger_mask = cat_trigger_mask | pri_trigger_mask
-    svm_mismatch_indices = test_df[any_trigger_mask].index[
-        : min(max_genai_rows, any_trigger_mask.sum())
-    ]
-    print(f"[Hybrid trigger] mode={trigger_label}")
-    print(f"[Hybrid trigger] cat_trigger={cat_trigger_mask.sum()} "
-          f"pri_trigger={pri_trigger_mask.sum()} "
-          f"any_trigger={any_trigger_mask.sum()} "
-          f"akan dikoreksi={len(svm_mismatch_indices)}")
-
     # Metrik baseline ML (semua di TEST SET)
     metrics_rows: List[Dict] = [
         {"approach": "SVM",           **metrics_dict(test_df["category"].tolist(), test_df["svm_category"].tolist(), "category")},
@@ -557,75 +373,7 @@ def run_pipeline(
             {"approach": "Logistic Regression", **metrics_dict(test_df["priority"].tolist(),  test_df["lr_priority"].tolist(),  "priority")},
         ]
 
-    for selected_model in selected_models:
-        model_key = re.sub(r"[^a-zA-Z0-9]+", "_", selected_model).strip("_").lower()
-        hybrid_svm_cat_col = f"hybrid_svm_category_{model_key}"
-        hybrid_svm_pri_col = f"hybrid_svm_priority_{model_key}"
-
-        test_df[hybrid_svm_cat_col] = test_df["svm_category"]
-        test_df[hybrid_svm_pri_col] = test_df["svm_priority"]
-
-        # Audit kolom — Phase 4: catat baris mana yang BENAR-BENAR berubah (hybrid != SVM).
-        cat_audit_col = f"hybrid_svm_cat_overridden_{model_key}"
-        pri_audit_col = f"hybrid_svm_pri_overridden_{model_key}"
-        test_df[cat_audit_col] = False
-        test_df[pri_audit_col] = False
-
-        # Hybrid SVM: SVM prediksi, GenAI koreksi PER-KOLOM via constrained validator.
-        # - Per-kolom (Phase 2): kolom dengan SVM "yakin" tidak diutak-atik
-        # - Constrained (Phase 3): GenAI memilih dari top-K kandidat SVM, bukan generator bebas
-        # - Guarded (Phase 4): override hanya dicatat jika nilai berbeda dari SVM top-1
-        cat_consulted = pri_consulted = 0
-        cat_overridden = pri_overridden = 0
-        print(f"\n[Hybrid SVM] {selected_model}")
-        for processed, idx in enumerate(svm_mismatch_indices, start=1):
-            row_cat_topk = cat_topk[idx]
-            row_pri_topk = pri_topk[idx]
-            svm_cat_top1 = test_df.at[idx, "svm_category"]
-            svm_pri_top1 = test_df.at[idx, "svm_priority"]
-
-            if correction_mode == "confidence":
-                new_cat, new_pri = classify_with_genai_constrained(
-                    client=client, model=selected_model,
-                    text=test_df.at[idx, "description"],
-                    top_categories=row_cat_topk,
-                    top_priorities=row_pri_topk,
-                    ml_category=svm_cat_top1,
-                    ml_priority=svm_pri_top1,
-                )
-            else:
-                new_cat, new_pri = classify_with_genai(
-                    client=client, model=selected_model,
-                    text=test_df.at[idx, "description"],
-                    allowed_categories=allowed_categories,
-                    allowed_priorities=allowed_priorities,
-                    ml_category=svm_cat_top1,
-                    ml_priority=svm_pri_top1,
-                )
-
-            if cat_trigger_mask.at[idx]:
-                cat_consulted += 1
-                test_df.at[idx, hybrid_svm_cat_col] = new_cat
-                if new_cat != svm_cat_top1:
-                    test_df.at[idx, cat_audit_col] = True
-                    cat_overridden += 1
-            if pri_trigger_mask.at[idx]:
-                pri_consulted += 1
-                test_df.at[idx, hybrid_svm_pri_col] = new_pri
-                if new_pri != svm_pri_top1:
-                    test_df.at[idx, pri_audit_col] = True
-                    pri_overridden += 1
-            if processed % 20 == 0:
-                print(f"  processed {processed}/{len(svm_mismatch_indices)}")
-        print(f"  [{selected_model}] cat consulted={cat_consulted} overridden={cat_overridden} | "
-              f"pri consulted={pri_consulted} overridden={pri_overridden}")
-
-        metrics_rows.append({"approach": f"Hybrid SVM ({selected_model})",
-            **metrics_dict(test_df["category"].tolist(), test_df[hybrid_svm_cat_col].tolist(), "category")})
-        metrics_rows.append({"approach": f"Hybrid SVM ({selected_model})",
-            **metrics_dict(test_df["priority"].tolist(),  test_df[hybrid_svm_pri_col].tolist(),  "priority")})
-
-    # === Strategi 2: Hybrid SVM-GenAI Voting Ensemble ===
+    # === Hybrid SVM-GenAI Voting Ensemble ===
     # GenAI prediksi independen (tanpa hint SVM) di SEMUA test rows,
     # lalu majority vote dengan SVM. Tie-break: pakai Fusion kalau tersedia, else SVM.
     if enable_voting:
@@ -694,18 +442,14 @@ def run_pipeline(
     metrics_df = pd.DataFrame(metrics_rows)
 
     summary_rows = [
-        {"key": "selected_models",             "value": ", ".join(selected_models)},
-        {"key": "bert_model",                  "value": bert_model_name if bert_available else "skipped"},
-        {"key": "embed_model",                 "value": embed_model if fusion_available else "skipped"},
-        {"key": "total_rows",                  "value": len(df)},
-        {"key": "train_rows",                  "value": len(train_df)},
-        {"key": "test_rows",                   "value": len(test_df)},
-        {"key": "split_strategy",              "value": f"stratified 80/20 by category, random_state={random_state}"},
-        {"key": "correction_mode",             "value": correction_mode},
-        {"key": "conf_percentile",             "value": conf_percentile if correction_mode == "confidence" else "n/a"},
-        {"key": "topk_candidates",             "value": topk if correction_mode == "confidence" else "n/a"},
-        {"key": "svm_mismatch_rows_corrected", "value": len(svm_mismatch_indices)},
-        {"key": "max_genai_rows",              "value": max_genai_rows},
+        {"key": "selected_models",  "value": ", ".join(selected_models)},
+        {"key": "bert_model",       "value": bert_model_name if bert_available else "skipped"},
+        {"key": "embed_model",      "value": embed_model if fusion_available else "skipped"},
+        {"key": "total_rows",       "value": len(df)},
+        {"key": "train_rows",       "value": len(train_df)},
+        {"key": "test_rows",        "value": len(test_df)},
+        {"key": "split_strategy",   "value": f"stratified 80/20 by category, random_state={random_state}"},
+        {"key": "voting_enabled",   "value": enable_voting},
     ]
     summary_df = pd.DataFrame(summary_rows)
 
@@ -781,11 +525,10 @@ def run_pipeline_kfold(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Bandingkan SVM vs RF vs LR vs BERT vs Hybrid SVM")
+    parser = argparse.ArgumentParser(description="Bandingkan SVM vs RF vs LR vs BERT vs Hybrid SVM (Fusion / Voting)")
     parser.add_argument("--input",          default="data/cobacek.xlsx",            help="Path file input Excel")
     parser.add_argument("--output",         default="results/cobacek_compare.xlsx", help="Path file output Excel")
-    parser.add_argument("--max-genai-rows", type=int, default=100,          help="Batas baris untuk inferensi GenAI (Hybrid SVM)")
-    parser.add_argument("--model",          default=None,                   help="Paksa model GenAI tertentu")
+    parser.add_argument("--model",          default=None,                   help="Paksa model GenAI tertentu (untuk voting)")
     parser.add_argument("--models",         default=None,
         help="Daftar model dipisah koma (contoh: gpt-4.1-mini,gpt-4o-mini)")
     parser.add_argument("--bert-model",     default="distilbert-base-multilingual-cased",
@@ -796,12 +539,6 @@ if __name__ == "__main__":
     parser.add_argument("--skip-fusion",    action="store_true",            help="Lewati Hybrid SVM (TF-IDF + Embedding)")
     parser.add_argument("--embed-model",    default="text-embedding-3-small",
         help="OpenAI embedding model (default: text-embedding-3-small)")
-    parser.add_argument("--correction-mode", default="confidence", choices=["confidence", "oracle"],
-        help="Trigger koreksi GenAI: 'confidence' (deployable, default) atau 'oracle' (ablation)")
-    parser.add_argument("--conf-percentile", type=float, default=30.0,
-        help="Bottom X%% margin SVM yang dikirim ke GenAI (default: 30)")
-    parser.add_argument("--topk",           type=int, default=3,
-        help="Jumlah kandidat top-K SVM untuk multiple-choice GenAI (default: 3)")
     parser.add_argument("--n-folds",        type=int, default=1,
         help="Jumlah fold untuk Stratified K-Fold CV (default: 1 = single 80/20 split)")
     parser.add_argument("--base-seed",      type=int, default=42,
@@ -815,7 +552,6 @@ if __name__ == "__main__":
         models_arg = [m.strip() for m in args.models.split(",") if m.strip()]
 
     common_kwargs = dict(
-        max_genai_rows=args.max_genai_rows,
         forced_model=args.model,
         multi_models=models_arg,
         bert_model_name=args.bert_model,
@@ -824,9 +560,6 @@ if __name__ == "__main__":
         skip_lr=args.skip_lr,
         skip_fusion=args.skip_fusion,
         embed_model=args.embed_model,
-        correction_mode=args.correction_mode,
-        conf_percentile=args.conf_percentile,
-        topk=args.topk,
         enable_voting=args.enable_voting,
     )
 
