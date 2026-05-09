@@ -208,6 +208,8 @@ def run_pipeline(
             raise ValueError(f"Kolom target '{category_col}' tidak ada di {input_file}. "
                              f"Kolom tersedia: {list(df.columns)}")
         df["category"] = df[category_col]
+        # Drop kolom source supaya tidak duplikat di output (sudah merge ke 'category').
+        df = df.drop(columns=[category_col])
         print(f"[Target] Pakai kolom '{category_col}' sebagai target kategori "
               f"({df['category'].nunique()} kelas unik)")
 
