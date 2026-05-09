@@ -68,7 +68,8 @@ Teks tiket ─────┤                                           ├─�
 
 ```
 rpl-svm1/
-├── .env                          # OPENAI_API_KEY
+├── .env                          # API key + config (gitignored)
+├── .env.example                  # Template config (commit-able)
 ├── .gitignore
 ├── README.md
 ├── requirements.txt
@@ -163,8 +164,15 @@ python src/compare_svm_genai.py --skip-bert --enable-voting --model gpt-4.1-mini
 python src/compare_svm_genai.py --skip-bert --n-folds 5
 ```
 
-> **Catatan:** OpenAI API key harus tersedia di `.env` (`OPENAI_API_KEY=...`).
-> Embedding (untuk Fusion) pakai `text-embedding-3-small` — sangat murah (~$0.03 per run).
+> **Setup `.env`:** Copy `.env.example` ke `.env`, isi `OPENAI_API_KEY`. Konfigurasi env yang dipakai:
+>
+> | Var | Wajib? | Fungsi |
+> |---|---|---|
+> | `OPENAI_API_KEY` | ✅ | API key untuk Embedding & Chat API |
+> | `OPENAI_EMBED_MODEL` | Opsional | Embedding model untuk Hybrid Fusion (default `text-embedding-3-small`) |
+> | `OPENAI_MODELS` | Opsional | Chat models untuk Hybrid Voting (`--enable-voting`); pisah koma untuk multi-model |
+>
+> Biaya tipikal: Fusion ~$0.03/run, Voting ~$2-3/run di 3268 test rows.
 
 ### 3. Visualisasi Heatmap
 

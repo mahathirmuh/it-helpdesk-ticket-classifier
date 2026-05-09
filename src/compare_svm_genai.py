@@ -536,6 +536,9 @@ def run_pipeline_kfold(
 
 
 if __name__ == "__main__":
+    # Load .env dulu supaya OPENAI_EMBED_MODEL bisa jadi default --embed-model
+    load_dotenv()
+
     parser = argparse.ArgumentParser(description="Bandingkan SVM vs RF vs LR vs BERT vs Hybrid SVM (Fusion / Voting)")
     parser.add_argument("--input",          default="data/cobacek_filtered.xlsx",            help="Path file input Excel")
     parser.add_argument("--output",         default="results/cobacek_filtered_compare.xlsx", help="Path file output Excel")
@@ -548,8 +551,8 @@ if __name__ == "__main__":
     parser.add_argument("--skip-bert",      action="store_true",            help="Lewati BERT")
     parser.add_argument("--skip-lr",        action="store_true",            help="Lewati Logistic Regression")
     parser.add_argument("--skip-fusion",    action="store_true",            help="Lewati Hybrid SVM (TF-IDF + Embedding)")
-    parser.add_argument("--embed-model",    default="text-embedding-3-small",
-        help="OpenAI embedding model (default: text-embedding-3-small)")
+    parser.add_argument("--embed-model",    default=os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-small"),
+        help="OpenAI embedding model (default dari OPENAI_EMBED_MODEL di .env, fallback text-embedding-3-small)")
     parser.add_argument("--n-folds",        type=int, default=1,
         help="Jumlah fold untuk Stratified K-Fold CV (default: 1 = single 80/20 split)")
     parser.add_argument("--base-seed",      type=int, default=42,
