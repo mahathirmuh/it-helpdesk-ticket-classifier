@@ -117,6 +117,37 @@ def build_lr_pipeline() -> Pipeline:
     ])
 
 
+def _parse_json_response(raw: str) -> dict:
+    """Parse JSON output dari LLM, robust terhadap markdown code fence wrapping
+    (```json {...} ```), prefix text, atau trailing text. Raise json.JSONDecodeError
+    kalau benar-benar tidak ada JSON valid."""
+    if not raw:
+        raise json.JSONDecodeError("empty response", raw, 0)
+    s = raw.strip()
+    # Strip markdown code fence ```json ... ``` atau ``` ... ```
+    if s.startswith("```"):
+        # Hapus opening fence (```json atau ```)
+        first_newline = s.find("\n")
+        if first_newline != -1:
+            s = s[first_newline + 1:]
+        else:
+            s = s[3:]
+        # Hapus closing fence
+        if s.endswith("```"):
+            s = s[:-3]
+        s = s.strip()
+    # Coba parse langsung
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        pass
+    # Fallback: cari objek JSON pertama via regex
+    m = re.search(r"\{[^{}]*\}", s, re.DOTALL)
+    if m:
+        return json.loads(m.group())
+    raise json.JSONDecodeError("no valid JSON object found", raw, 0)
+
+
 def classify_with_genai_voter(
     client: OpenAI,
     model: str,
@@ -151,7 +182,7 @@ Ticket description:
         try:
             response = client.responses.create(model=model, input=prompt)
             raw = (response.output_text or "").strip()
-            parsed = json.loads(raw)
+            parsed = _parse_json_response(raw)
             cat = str(parsed.get("category", default_cat)).strip()
             pri = str(parsed.get("priority", default_pri)).strip()
             if cat not in allowed_categories:
