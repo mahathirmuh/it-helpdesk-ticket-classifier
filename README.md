@@ -231,6 +231,18 @@ python src/anchor_bias_ablation.py --n-samples 300
 python src/topk_ablation.py --n-samples 300 --topk-list 3,5,7,10,19
 ```
 
+### 6. Open-Source Embedding Alternative (SBERT)
+
+Jalankan Hybrid Fusion dengan SBERT (sentence-transformers) sebagai alternatif gratis ke OpenAI Embedding:
+
+```bash
+python src/compare_svm_genai.py --skip-bert \
+    --embed-backend sbert --embed-model all-MiniLM-L6-v2 \
+    --output results/cobacek_filtered_sbert.xlsx
+```
+
+CPU-inferable, **no API key needed**. Performance comparable dengan OpenAI Embedding (Acc Cat 0.8277 vs 0.8250).
+
 ---
 
 ## Konfigurasi Utama

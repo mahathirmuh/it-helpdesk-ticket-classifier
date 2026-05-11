@@ -176,7 +176,7 @@ We study this architecture extensively in Section 4.4 (ablation).
 
 | Model | Acc Cat | F1 Cat (macro) | Acc Pri | F1 Pri (macro) |
 |---|---|---|---|---|
-| **Hybrid Fusion** ✅ | **0.8214 ± 0.003** | **0.6738 ± 0.009** | **0.7219 ± 0.009** | **0.7097 ± 0.008** |
+| **Hybrid Fusion (OpenAI)** ✅ | **0.8214 ± 0.003** | **0.6738 ± 0.009** | **0.7219 ± 0.009** | **0.7097 ± 0.008** |
 | SVM | 0.8125 ± 0.004 | 0.6535 ± 0.015 | 0.7167 ± 0.011 | 0.7033 ± 0.009 |
 | Random Forest | 0.7660 ± 0.005 | 0.5353 ± 0.018 | 0.7172 ± 0.009 | 0.6838 ± 0.010 |
 | Logistic Regression | 0.7764 ± 0.005 | 0.4713 ± 0.007 | 0.6335 ± 0.008 | 0.5864 ± 0.008 |
@@ -188,6 +188,20 @@ We study this architecture extensively in Section 4.4 (ablation).
 - Konsisten unggul di **semua 5 fold**
 
 **Answer to RQ1:** Yes, Hybrid Fusion outperforms SVM with statistical significance.
+
+### 4.1.1 Open-Source Backend Validation (SBERT)
+
+To validate that Hybrid Fusion benefit is **not tied to a specific proprietary API**, we replicate the Fusion variant using SBERT (`sentence-transformers/all-MiniLM-L6-v2`, 384-dim, CPU-inferable, free). Same single split (train_random_state=42).
+
+**Table 1b: SBERT vs OpenAI Embedding Backend (single split)**
+
+| Backend | Acc Cat | F1 Cat | Acc Pri | F1 Pri | Cost |
+|---|---|---|---|---|---|
+| SVM (baseline) | 0.8146 | 0.6698 | 0.7197 | 0.7059 | $0 |
+| Hybrid Fusion **SBERT** | **0.8277** | 0.6858 | 0.7258 | 0.7135 | **$0** (CPU) |
+| Hybrid Fusion **OpenAI** | 0.8250 | **0.6881** | **0.7289** | **0.7155** | ~$0.03/run |
+
+**Finding:** Both backends produce **comparable performance** (within ~0.3%). Hybrid Fusion improvement over SVM is robust across embedding choice, **not specific to OpenAI's model**. This makes our approach reproducible by organizations without paid API access.
 
 ### 4.2 Hybrid Voting Analysis (3-way Ensemble)
 
