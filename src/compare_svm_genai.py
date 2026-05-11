@@ -103,6 +103,39 @@ class OpenAIEmbedder(BaseEstimator, TransformerMixin):
         return np.asarray(all_embeds, dtype=np.float32)
 
 
+class SBERTEmbedder(BaseEstimator, TransformerMixin):
+    """Sklearn-compatible wrapper untuk sentence-transformers (open-source).
+    Alternative gratis ke OpenAIEmbedder. Inference di CPU (no GPU required).
+    Default model: all-MiniLM-L6-v2 (384-dim, fast, 90MB)."""
+
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2",
+                 batch_size: int = 64, max_chars: int = 8000,
+                 device: Optional[str] = None):
+        self.model_name = model_name
+        self.batch_size = batch_size
+        self.max_chars = max_chars
+        self.device = device  # None = auto-detect (CPU kalau no GPU)
+        self._model = None
+
+    def _get_model(self):
+        if self._model is None:
+            from sentence_transformers import SentenceTransformer
+            self._model = SentenceTransformer(self.model_name, device=self.device)
+        return self._model
+
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X):
+        model = self._get_model()
+        texts = list(X) if not isinstance(X, list) else X
+        texts = [(t[: self.max_chars] if t else " ") for t in texts]
+        print(f"  [SBERT] Encoding {len(texts)} texts with {self.model_name}...")
+        embeds = model.encode(texts, batch_size=self.batch_size,
+                              show_progress_bar=True, convert_to_numpy=True)
+        return np.asarray(embeds, dtype=np.float32)
+
+
 def build_rf_pipeline() -> Pipeline:
     return Pipeline([
         ("tfidf", TfidfVectorizer(ngram_range=(1, 2))),
@@ -222,6 +255,7 @@ def run_pipeline(
     skip_lr: bool = False,
     skip_fusion: bool = False,
     embed_model: str = "text-embedding-3-small",
+    embed_backend: str = "openai",
     random_state: int = 42,
     enable_voting: bool = False,
     category_col: str = "category_filtered",
@@ -298,14 +332,24 @@ def run_pipeline(
     print(f"RF  Category Acc: {accuracy_score(test_df['category'], test_df['rf_category']):.4f} | "
           f"Priority Acc: {accuracy_score(test_df['priority'], test_df['rf_priority']):.4f}")
 
-    # --- Hybrid SVM (Feature Fusion: TF-IDF + GenAI Embedding) ---
+    # --- Hybrid SVM (Feature Fusion: TF-IDF + Embedding) ---
     fusion_available = not skip_fusion
     if fusion_available:
         from scipy.sparse import csr_matrix, hstack as sparse_hstack
 
-        print(f"\n[Hybrid SVM Fusion] Embedding model: {embed_model}")
-        print(f"[Fusion] Encoding {len(train_df)} train + {len(test_df)} test deskripsi via OpenAI Embedding API...")
-        embedder = OpenAIEmbedder(model_name=embed_model, api_key=api_key)
+        if embed_backend == "openai":
+            print(f"\n[Hybrid SVM Fusion] Backend: OpenAI, model: {embed_model}")
+            embedder = OpenAIEmbedder(model_name=embed_model, api_key=api_key)
+            backend_label = f"openai/{embed_model}"
+        elif embed_backend == "sbert":
+            # Untuk SBERT, embed_model default ke MiniLM kalau user pass OpenAI default
+            sbert_model = embed_model if "embedding" not in embed_model.lower() else "all-MiniLM-L6-v2"
+            print(f"\n[Hybrid SVM Fusion] Backend: SBERT (local, no API), model: {sbert_model}")
+            embedder = SBERTEmbedder(model_name=sbert_model)
+            backend_label = f"sbert/{sbert_model}"
+        else:
+            raise ValueError(f"embed_backend tidak dikenal: {embed_backend}. Pilih 'openai' atau 'sbert'.")
+        print(f"[Fusion] Encoding {len(train_df)} train + {len(test_df)} test deskripsi...")
         train_embeds = embedder.fit_transform(train_df["description"].tolist())
         test_embeds = embedder.transform(test_df["description"].tolist())
 
@@ -403,8 +447,8 @@ def run_pipeline(
     ]
     if fusion_available:
         metrics_rows += [
-            {"approach": "Hybrid SVM (TF-IDF + Embedding)", **metrics_dict(test_df["category"].tolist(), test_df["fusion_category"].tolist(), "category")},
-            {"approach": "Hybrid SVM (TF-IDF + Embedding)", **metrics_dict(test_df["priority"].tolist(),  test_df["fusion_priority"].tolist(),  "priority")},
+            {"approach": f"Hybrid SVM Fusion ({backend_label})", **metrics_dict(test_df["category"].tolist(), test_df["fusion_category"].tolist(), "category")},
+            {"approach": f"Hybrid SVM Fusion ({backend_label})", **metrics_dict(test_df["priority"].tolist(),  test_df["fusion_priority"].tolist(),  "priority")},
         ]
     if bert_available:
         metrics_rows += [
@@ -585,7 +629,9 @@ if __name__ == "__main__":
     parser.add_argument("--skip-lr",        action="store_true",            help="Lewati Logistic Regression")
     parser.add_argument("--skip-fusion",    action="store_true",            help="Lewati Hybrid SVM (TF-IDF + Embedding)")
     parser.add_argument("--embed-model",    default=os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-small"),
-        help="OpenAI embedding model (default dari OPENAI_EMBED_MODEL di .env, fallback text-embedding-3-small)")
+        help="Embedding model name (default dari OPENAI_EMBED_MODEL di .env). Untuk SBERT contoh: 'all-MiniLM-L6-v2'")
+    parser.add_argument("--embed-backend",  default="openai", choices=["openai", "sbert"],
+        help="Embedding backend: 'openai' (API, 1536-dim) atau 'sbert' (local, 384-dim default)")
     parser.add_argument("--n-folds",        type=int, default=1,
         help="Jumlah fold untuk Stratified K-Fold CV (default: 1 = single 80/20 split)")
     parser.add_argument("--base-seed",      type=int, default=42,
@@ -609,6 +655,7 @@ if __name__ == "__main__":
         skip_lr=args.skip_lr,
         skip_fusion=args.skip_fusion,
         embed_model=args.embed_model,
+        embed_backend=args.embed_backend,
         enable_voting=args.enable_voting,
         category_col=args.category_col,
     )
