@@ -123,6 +123,84 @@ Membuat **Hybrid SVM-GenAI unggul SVM tunggal** secara statistik, dengan metodol
 
 ---
 
+## Phase 6 — Deep Analysis untuk Paper Q2 (Hybrid Architectures + Anchor Bias)
+
+**Status:** Selesai
+
+### Tujuan
+
+Strengthen empirical base untuk Q2 journal submission. Validate findings dengan ablation systematic + significance testing.
+
+### Sub-phase
+
+#### Phase 6a — Per-class F1 + Paired t-test (Tahap 1)
+
+- Script: `src/analysis_phase1.py`
+- Output: `results/analysis_phase1.xlsx` + `results/figures_phase1/`
+- Hasil: Hybrid Fusion vs SVM paired t-test (5 fold):
+  - Acc Cat **p=0.007** (signifikan p<0.01)
+  - F1 Cat **p=0.004** (signifikan p<0.01)
+- Konfirmasi: Hybrid Fusion unggul signifikan secara statistik di **semua 5 fold**
+
+#### Phase 6b — Hybrid Voting Ensemble (Tahap 2)
+
+- Run: `python src/compare_svm_genai.py --skip-bert --enable-voting --model gpt-4.1-mini`
+- Output: `results/voting_gpt41mini_v2.xlsx`
+- Analysis: `src/analysis_phase2.py` → `results/analysis_phase2_v2.xlsx`
+- **Bug ditemukan & di-fix**: JSON markdown code fence parsing (`_parse_json_response()` di compare_svm_genai.py)
+- Hasil 3 architectures:
+  - SVM: Acc 0.8146 / F1 0.6698
+  - Hybrid Fusion: Acc 0.8250 / F1 0.6881
+  - GenAI Voter alone: Acc 0.5346 (weak)
+  - Hybrid Voting (3-way): Acc 0.8265 / F1 0.6888 (+0.15% vs Fusion, marginal)
+- Voting agreement: vote_eq_fusion 99.2% → Voting hampir tidak menambah nilai vs Fusion saja
+- Cost-efficiency conclusion: Fusion ($0.03+5min) >> Voting ($3+3h) untuk gain 0.15%
+
+#### Phase 6c — Anchor Bias Ablation (Tahap 3)
+
+- Script: `src/anchor_bias_ablation.py`
+- Setup: 5 prompt variants × 300 SVM-wrong samples = 1500 LLM calls
+- Output: `results/anchor_bias_ablation.xlsx` + `results/figures_phase3/anchor_bias_ablation.png`
+- **Important reinterpretation**: "0% override" di Hybrid Correction original = JSON parsing bug, BUKAN anchor bias.
+- Hasil 5 prompt variants:
+  - V1 NO_ML: LLM correct 45.3%
+  - V2 NEUTRAL_ML: LLM correct 44.7%
+  - V3 DEFER_ML (original): LLM correct 43.3%
+  - V4 CHALLENGE_ML: LLM correct 43.7%
+  - V5 TOP3_CHOICES: LLM correct **56.7%** ⭐
+- Finding: Anchor framing (V1-V4) tidak signifikan beda outcome. V5 (constrained shortlist) dramatically better.
+
+#### Phase 6d — Top-K Label Space Ablation (Tahap 3b)
+
+- Script: `src/topk_ablation.py`
+- Setup: 5 K values (3, 5, 7, 10, 19) × 300 samples = 1500 LLM calls
+- Output: `results/topk_ablation.xlsx` + `results/figures_phase3/topk_ablation.png`
+- Hasil monotonic decrease:
+  - K=3:  LLM correct **56.3%** (best)
+  - K=5:  LLM correct 52.7%
+  - K=7:  LLM correct 52.3%
+  - K=10: LLM correct 49.7%
+  - K=19: LLM correct 45.3% (worst, same as V1 NO_ML)
+- **Finding:** **Label space size IS the lever** untuk hybrid correction quality. Monotonic relationship from K=3 to K=19 (~11pp drop). Practical guideline: gunakan top-3 ML candidates.
+
+### Paper Contributions Final
+
+1. **Main:** Hybrid SVM-GenAI (Fusion) outperforms SVM signifikan di 5-fold CV (p<0.01)
+2. **Anti-finding:** Hybrid Voting marginal vs Fusion (cost-efficiency analysis)
+3. **Novel insight:** Label space size > anchor framing untuk decision-level hybrid quality
+
+### Budget Tracking
+
+| Item | Cost OpenAI |
+|---|---|
+| Voting v2 (3268 calls) | ~$3 |
+| Anchor bias ablation (1500 calls) | ~$2 |
+| Top-K ablation (1500 calls) | ~$2 |
+| Embedding (multiple runs) | ~$0.20 |
+| **Total Phase 6** | **~$7** |
+
+---
+
 ## Catatan Teknis
 
 | Topik | Keputusan |

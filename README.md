@@ -49,18 +49,32 @@ Teks tiket ─────┤                                           ├─�
 
 ---
 
-## Hasil — Filtered Dataset (16.338 tiket, 19 kategori, stratified 80/20 split)
+## Hasil Utama
 
-| Model | Acc Cat | Acc Pri | F1 Cat (macro) | F1 Pri (macro) |
+### 5-Fold Stratified CV (filtered dataset, 16.338 tiket, 19 kategori)
+
+| Model | Acc Cat (mean ± std) | F1 Cat | Acc Pri | F1 Pri |
 |---|---|---|---|---|
-| **Hybrid SVM-GenAI (Fusion)** | **0.8250** ✅ | **0.7292** ✅ | **0.6881** ✅ | **0.7157** ✅ |
-| SVM | 0.8146 | 0.7197 | 0.6698 | 0.7059 |
-| Logistic Regression | 0.7723 | 0.6313 | 0.4654 | 0.5809 |
-| Random Forest | 0.7619 | 0.7075 | 0.5394 | 0.6722 |
+| **Hybrid SVM-GenAI (Fusion)** ✅ | **0.8214 ± 0.003** | **0.6738 ± 0.009** | **0.7219 ± 0.009** | **0.7097 ± 0.008** |
+| SVM | 0.8125 ± 0.004 | 0.6535 ± 0.015 | 0.7167 ± 0.011 | 0.7033 ± 0.009 |
+| Random Forest | 0.7660 ± 0.005 | 0.5353 ± 0.018 | 0.7172 ± 0.009 | 0.6838 ± 0.010 |
+| Logistic Regression | 0.7764 ± 0.005 | 0.4713 ± 0.007 | 0.6335 ± 0.008 | 0.5864 ± 0.008 |
 
-> **Hybrid SVM-GenAI (Fusion) unggul di semua metrik vs single SVM** (+1.04% Acc Cat, +0.95% Acc Pri, +1.83% F1 Cat).
-> Run dengan `python src/compare_svm_genai.py --skip-bert` (default sudah pakai filtered dataset).
-> Heatmap visualisasi lengkap di `results/heatmap_filtered.png`.
+**Paired t-test (per-fold, Hybrid Fusion vs SVM):** Acc Cat **p=0.007** (signifikan), F1 Cat **p=0.004** (signifikan). Hybrid Fusion unggul SVM di **semua 5 fold**.
+
+> Run: `python src/compare_svm_genai.py --skip-bert --n-folds 5`
+> Heatmap: `results/heatmap_kfold.png`
+
+### Findings Tambahan untuk Paper
+
+| # | Finding | File Bukti |
+|---|---|---|
+| 1 | **Hybrid Fusion > SVM signifikan** (p<0.01) di 5-fold CV | `results/analysis_phase1.xlsx` |
+| 2 | **Hybrid Voting marginal** vs Fusion (+0.15% Acc, cost 100×) — voting agreement 99.2% dengan Fusion | `results/analysis_phase2_v2.xlsx` |
+| 3 | **Anchor framing TIDAK signifikan** affect LLM correction — V1 NO_ML, V3 DEFER_ML, V4 CHALLENGE_ML semua hasilkan ~43-45% LLM correct rate | `results/anchor_bias_ablation.xlsx` |
+| 4 | **Label space size IS the lever** ⭐ — top-K shortlist monotonic: K=3 → 56.3% correct, K=19 → 45.3% (-11 pp) | `results/topk_ablation.xlsx` |
+
+Top-K ablation visualisasi: `results/figures_phase3/topk_ablation.png`
 
 ---
 
@@ -78,6 +92,10 @@ rpl-svm1/
 │   ├── bert_classifier.py        # Wrapper BERT sklearn-compatible
 │   ├── compare_svm_genai.py      # Pipeline komparasi semua skema (utama)
 │   ├── visualize_results.py      # Generate heatmap dari hasil Excel
+│   ├── analysis_phase1.py        # Per-class F1 + paired t-test
+│   ├── analysis_phase2.py        # 3-architecture comparison + voting breakdown
+│   ├── anchor_bias_ablation.py   # 5 prompt variants ablation study
+│   ├── topk_ablation.py          # Label space size sweep (K=3..19)
 │   ├── train_svm.py              # Standalone trainer: SVM
 │   ├── train_rf.py               # Standalone trainer: Random Forest
 │   ├── train_logres.py           # Standalone trainer: Logistic Regression
@@ -93,8 +111,16 @@ rpl-svm1/
 │   ├── cobacek_filtered_compare.xlsx       # Single split — Hybrid Fusion menang
 │   ├── cobacek_filtered_kfold.xlsx         # 5-fold CV mean ± std
 │   ├── cobacek_filtered_kfold_fold[0-4].xlsx
+│   ├── voting_gpt41mini_v2.xlsx            # Voting Ensemble (Tahap 2)
+│   ├── analysis_phase1.xlsx                # Per-class F1 + paired t-test
+│   ├── analysis_phase2_v2.xlsx             # 3-architecture comparison
+│   ├── anchor_bias_ablation.xlsx           # 5 prompt variants (Tahap 3)
+│   ├── topk_ablation.xlsx                  # Label space size sweep (Tahap 3b)
 │   ├── heatmap_filtered.png                # Heatmap single split
 │   ├── heatmap_kfold.png                   # Heatmap 5-fold mean
+│   ├── figures_phase1/                     # Per-class F1 plots
+│   ├── figures_phase2/                     # 3-architecture comparison plot
+│   ├── figures_phase3/                     # Anchor bias + top-K plots
 │   └── archive/                            # Hasil eksperimen lama (14 file)
 │
 ├── docs/                         # Dokumentasi rencana
@@ -187,6 +213,22 @@ python src/visualize_results.py \
 
 ```bash
 jupyter notebook notebooks/compare_svm_genai.ipynb
+```
+
+### 5. Analysis Pipeline (untuk Paper)
+
+```bash
+# Tahap 1 — per-class F1 + paired t-test (free, ~30 detik)
+python src/analysis_phase1.py
+
+# Tahap 2 — 3-architecture comparison (butuh voting run dulu)
+python src/analysis_phase2.py --input results/voting_gpt41mini_v2.xlsx
+
+# Tahap 3 — anchor bias ablation (5 prompt variants × 300 samples, ~$2, ~1.5 jam)
+python src/anchor_bias_ablation.py --n-samples 300
+
+# Tahap 3b — top-K label space sweep (5 K values × 300 samples, ~$2, ~45 menit)
+python src/topk_ablation.py --n-samples 300 --topk-list 3,5,7,10,19
 ```
 
 ---
